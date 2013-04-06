@@ -1,0 +1,132 @@
+From 966ece2a10461e516b33fca1082bb909797fdcba Mon Sep 17 00:00:00 2001
+From: Semen Martynov <semen.martynov@gmail.com>
+Date: Sat, 6 Apr 2013 23:18:13 +0400
+Subject: [PATCH] PR7
+
+---
+ drivers/Kconfig                     |    2 ++
+ drivers/Makefile                    |    3 +++
+ drivers/spbau/Kconfig               |    7 +++++++
+ drivers/spbau/Makefile              |    1 +
+ drivers/spbau/martynov/Kconfig      |    6 ++++++
+ drivers/spbau/martynov/Makefile     |    1 +
+ drivers/spbau/martynov/module-pr7.c |   38 +++++++++++++++++++++++++++++++++++
+ 7 files changed, 58 insertions(+)
+ create mode 100644 drivers/spbau/Kconfig
+ create mode 100644 drivers/spbau/Makefile
+ create mode 100644 drivers/spbau/martynov/Kconfig
+ create mode 100644 drivers/spbau/martynov/Makefile
+ create mode 100644 drivers/spbau/martynov/module-pr7.c
+
+diff --git a/drivers/Kconfig b/drivers/Kconfig
+index dbdefa3..ae256cb 100644
+--- a/drivers/Kconfig
++++ b/drivers/Kconfig
+@@ -1,5 +1,7 @@
+ menu "Device Drivers"
+ 
++source "drivers/spbau/Kconfig"
++
+ source "drivers/base/Kconfig"
+ 
+ source "drivers/bus/Kconfig"
+diff --git a/drivers/Makefile b/drivers/Makefile
+index a16a8d0..71cb9a7 100644
+--- a/drivers/Makefile
++++ b/drivers/Makefile
+@@ -5,6 +5,9 @@
+ # Rewritten to use lists instead of if-statements.
+ #
+ 
++# Modules for the Linux Kernel Programming Course at SPbAU
++obj-$(CONFIG_SPbAU_KERNEL)+= spbau/
++
+ obj-y				+= irqchip/
+ obj-y				+= bus/
+ 
+diff --git a/drivers/spbau/Kconfig b/drivers/spbau/Kconfig
+new file mode 100644
+index 0000000..f6b572e
+--- /dev/null
++++ b/drivers/spbau/Kconfig
+@@ -0,0 +1,7 @@
++config SPbAU_KERNEL
++	bool "SPbAU PR modules"
++	default y
++	---help---
++	 Modules for the Linux Kernel Programming Course at the St. Petersburg Academic University of the Russian Academy of Sciences.
++
++source "drivers/spbau/martynov/Kconfig"
+diff --git a/drivers/spbau/Makefile b/drivers/spbau/Makefile
+new file mode 100644
+index 0000000..20c48ea
+--- /dev/null
++++ b/drivers/spbau/Makefile
+@@ -0,0 +1 @@
++obj-$(CONFIG_SPbAU_KERNEL) += martynov/
+diff --git a/drivers/spbau/martynov/Kconfig b/drivers/spbau/martynov/Kconfig
+new file mode 100644
+index 0000000..55495b7
+--- /dev/null
++++ b/drivers/spbau/martynov/Kconfig
+@@ -0,0 +1,6 @@
++config SPbAU_PR7
++	tristate "Virtual time of execution counter."
++	depends on SPbAU_KERNEL
++	default m
++	---help---
++	 When this module loaded into the kernel, it counts summary of the virtual time of execution (vruntime) on all the parents and prits this number to the system console.
+diff --git a/drivers/spbau/martynov/Makefile b/drivers/spbau/martynov/Makefile
+new file mode 100644
+index 0000000..c3903c1
+--- /dev/null
++++ b/drivers/spbau/martynov/Makefile
+@@ -0,0 +1 @@
++obj-$(CONFIG_SPbAU_PR7) += module-pr7.o
+diff --git a/drivers/spbau/martynov/module-pr7.c b/drivers/spbau/martynov/module-pr7.c
+new file mode 100644
+index 0000000..42274f5
+--- /dev/null
++++ b/drivers/spbau/martynov/module-pr7.c
+@@ -0,0 +1,38 @@
++#include <linux/module.h>	// base
++#include <linux/kernel.h>	// printk()
++#include <linux/init.h>		// __init and __exit
++#include <linux/sched.h>	// current
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Semen Martynov <semen.martynov@gmail.com>");
++MODULE_DESCRIPTION("SPbAU: Linux Kernel Programming - task 07");
++MODULE_VERSION("1.0");
++
++void show_parents_vruntime(void)
++{
++	struct task_struct *task = current;
++	u64 vruntime_counter = 0;
++
++	printk("PID\tProc name\tProc vruntime");
++	while (task != task->real_parent) {
++		printk("%d\t%s\t%llu\n", task->pid, task->comm, (unsigned long long)task->se.vruntime);
++		vruntime_counter += task->se.vruntime;
++		task = task->real_parent;
++	}
++
++	printk("Total:\t%llu\n", (unsigned long long)vruntime_counter);
++}
++
++static int __init start(void)	// Entry point
++{
++	printk(KERN_INFO "********************\nModule for PR7 loaded\n********************\n");
++	show_parents_vruntime();		// Show collected data
++	return 0;			// successful result
++}
++
++static void __exit stop(void)	// Exit point
++{
++	printk(KERN_INFO "********************\nModule for PR7 unloaded\n********************\n");
++}
++module_init(start);
++module_exit(stop);
+-- 
+1.7.10.4
+
