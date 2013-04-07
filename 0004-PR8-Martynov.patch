@@ -1,0 +1,145 @@
+From 80f4055d5ad1e03ce582bef58762a48f12aba1d8 Mon Sep 17 00:00:00 2001
+From: Semen Martynov <semen.martynov@gmail.com>
+Date: Sun, 7 Apr 2013 02:36:24 +0400
+Subject: [PATCH] PR8
+
+---
+ arch/x86/syscalls/syscall_32.tbl |    1 +
+ arch/x86/syscalls/syscall_64.tbl |    1 +
+ kernel/sched/core.c              |   40 ++++++++++++++++++++++++++++++++++++++
+ user-space/Makefile              |    4 ++++
+ user-space/syscallclient.c       |   37 +++++++++++++++++++++++++++++++++++
+ 5 files changed, 83 insertions(+)
+ create mode 100644 user-space/Makefile
+ create mode 100644 user-space/syscallclient.c
+
+diff --git a/arch/x86/syscalls/syscall_32.tbl b/arch/x86/syscalls/syscall_32.tbl
+index a47103f..869989e 100644
+--- a/arch/x86/syscalls/syscall_32.tbl
++++ b/arch/x86/syscalls/syscall_32.tbl
+@@ -356,3 +356,4 @@
+ 347	i386	process_vm_readv	sys_process_vm_readv		compat_sys_process_vm_readv
+ 348	i386	process_vm_writev	sys_process_vm_writev		compat_sys_process_vm_writev
+ 349	i386	kcmp			sys_kcmp
++350	i386	getpnames		sys_getpnames
+diff --git a/arch/x86/syscalls/syscall_64.tbl b/arch/x86/syscalls/syscall_64.tbl
+index a582bfe..555b68e 100644
+--- a/arch/x86/syscalls/syscall_64.tbl
++++ b/arch/x86/syscalls/syscall_64.tbl
+@@ -319,6 +319,7 @@
+ 310	64	process_vm_readv	sys_process_vm_readv
+ 311	64	process_vm_writev	sys_process_vm_writev
+ 312	common	kcmp			sys_kcmp
++313	common	getpnames		sys_getpnames
+ 
+ #
+ # x32-specific system call numbers start at 512 to avoid cache impact
+diff --git a/kernel/sched/core.c b/kernel/sched/core.c
+index c529d00..0c994a8 100644
+--- a/kernel/sched/core.c
++++ b/kernel/sched/core.c
+@@ -88,6 +88,46 @@
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/sched.h>
+ 
++/* -------------------------------------------------------------------------------- */
++#include <asm/uaccess.h>
++
++typedef struct
++{
++	char name[TASK_COMM_LEN];
++} process_t;
++
++asmlinkage long sys_getpnames(process_t __user* out, size_t size)
++{
++	struct task_struct *task = current;
++	size_t i = 0;
++	size_t max = size / sizeof(process_t);
++
++	while (task != task->real_parent)
++	{
++		process_t ps;
++
++		if (i >= max)
++		{
++			break;
++		}
++
++		memcpy(ps.name, task->comm, TASK_COMM_LEN);
++
++		copy_to_user(&out[i], &ps, sizeof(ps));
++
++		i++;
++		task = task->real_parent;
++	}
++
++	if (i == max)
++	{
++		return -EXFULL;
++	}
++
++	return 0;
++}
++/* -------------------------------------------------------------------------------- */
++
+ void start_bandwidth_timer(struct hrtimer *period_timer, ktime_t period)
+ {
+ 	unsigned long delta;
+diff --git a/user-space/Makefile b/user-space/Makefile
+new file mode 100644
+index 0000000..627d31a
+--- /dev/null
++++ b/user-space/Makefile
+@@ -0,0 +1,4 @@
++result: syscallclient.c
++	gcc -Wall -o syscallclient syscallclient.c
++.PHONY clean:
++	rm ./syscallclient
+\ No newline at end of file
+diff --git a/user-space/syscallclient.c b/user-space/syscallclient.c
+new file mode 100644
+index 0000000..35bee40
+--- /dev/null
++++ b/user-space/syscallclient.c
+@@ -0,0 +1,37 @@
++#include <stdio.h>
++#include <string.h>
++#include <errno.h>
++#include <unistd.h>
++
++/* -------------------------------------------------------------------------------- */
++
++typedef struct {
++	char name[16];
++} process_t;
++
++#ifdef __x86_64__
++#define SYS_getpnames 313
++#else
++#define SYS_getpnames 350
++#endif
++
++/* -------------------------------------------------------------------------------- */
++
++static process_t processes[600];
++
++int main(void) {
++	if (syscall(SYS_getpnames, &processes, sizeof(processes)) < 0)
++	{
++		printf("Failed to get the process parent's names: %s\n", strerror(errno));
++		return 1;
++	}
++
++	process_t* p = processes;
++	while (p->name[0] != '\0')
++	{
++		printf("Task: %.16s\n", p->name);
++		++p;
++	}
++
++	return 0;
++}
+\ No newline at end of file
+-- 
+1.7.10.4
+
