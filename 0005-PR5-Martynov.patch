@@ -1,0 +1,426 @@
+From eef0adb77a95fec105631613a0d54d76cc722dd4 Mon Sep 17 00:00:00 2001
+From: Semen Martynov <semen.martynov@gmail.com>
+Date: Thu, 25 Apr 2013 02:30:22 +0400
+Subject: [PATCH] PR5
+
+---
+ drivers/Kconfig                     |    2 +
+ drivers/Makefile                    |    3 +
+ drivers/spbau/Kconfig               |    7 +
+ drivers/spbau/Makefile              |    1 +
+ drivers/spbau/martynov/Kconfig      |   28 ++++
+ drivers/spbau/martynov/Makefile     |    1 +
+ drivers/spbau/martynov/module-pr5.c |  310 +++++++++++++++++++++++++++++++++++
+ 7 files changed, 352 insertions(+)
+ create mode 100644 drivers/spbau/Kconfig
+ create mode 100644 drivers/spbau/Makefile
+ create mode 100644 drivers/spbau/martynov/Kconfig
+ create mode 100644 drivers/spbau/martynov/Makefile
+ create mode 100644 drivers/spbau/martynov/module-pr5.c
+
+diff --git a/drivers/Kconfig b/drivers/Kconfig
+index dbdefa3..ae256cb 100644
+--- a/drivers/Kconfig
++++ b/drivers/Kconfig
+@@ -1,5 +1,7 @@
+ menu "Device Drivers"
+ 
++source "drivers/spbau/Kconfig"
++
+ source "drivers/base/Kconfig"
+ 
+ source "drivers/bus/Kconfig"
+diff --git a/drivers/Makefile b/drivers/Makefile
+index a16a8d0..71cb9a7 100644
+--- a/drivers/Makefile
++++ b/drivers/Makefile
+@@ -5,6 +5,9 @@
+ # Rewritten to use lists instead of if-statements.
+ #
+ 
++# Modules for the Linux Kernel Programming Course at SPbAU
++obj-$(CONFIG_SPbAU_KERNEL)+= spbau/
++
+ obj-y				+= irqchip/
+ obj-y				+= bus/
+ 
+diff --git a/drivers/spbau/Kconfig b/drivers/spbau/Kconfig
+new file mode 100644
+index 0000000..f6b572e
+--- /dev/null
++++ b/drivers/spbau/Kconfig
+@@ -0,0 +1,7 @@
++config SPbAU_KERNEL
++	bool "SPbAU PR modules"
++	default y
++	---help---
++	 Modules for the Linux Kernel Programming Course at the St. Petersburg Academic University of the Russian Academy of Sciences.
++
++source "drivers/spbau/martynov/Kconfig"
+diff --git a/drivers/spbau/Makefile b/drivers/spbau/Makefile
+new file mode 100644
+index 0000000..20c48ea
+--- /dev/null
++++ b/drivers/spbau/Makefile
+@@ -0,0 +1 @@
++obj-$(CONFIG_SPbAU_KERNEL) += martynov/
+diff --git a/drivers/spbau/martynov/Kconfig b/drivers/spbau/martynov/Kconfig
+new file mode 100644
+index 0000000..48eac3a
+--- /dev/null
++++ b/drivers/spbau/martynov/Kconfig
+@@ -0,0 +1,28 @@
++config SPbAU_PR5
++	tristate "Read-only file system."
++	depends on SPbAU_KERNEL
++	default m
++	---help---
++	 Read-only file system.
++	 
++	 The following structure of directories is provided:
++	    / [D]
++	     + [D] personal
++	        + name [F]
++	        + email [F]
++	        + phone [F]
++	    / [D]
++	     + math [F]
++	     + programming [F]
++	     + engineering [F]
++	
++	 Where:
++	     D - directory
++	     F -  file
++	
++	 Contents of files:
++	     name - a name of the author of file system
++	     email - an e-mail address of the author
++	     math - a GPA on hypothetical mathematics
++	     programming - a GPA on hypothetical programming
++	     engineering - a GPA on hypothetical engineering.
+diff --git a/drivers/spbau/martynov/Makefile b/drivers/spbau/martynov/Makefile
+new file mode 100644
+index 0000000..e0a7812
+--- /dev/null
++++ b/drivers/spbau/martynov/Makefile
+@@ -0,0 +1 @@
++obj-$(CONFIG_SPbAU_PR5) += module-pr5.o
+diff --git a/drivers/spbau/martynov/module-pr5.c b/drivers/spbau/martynov/module-pr5.c
+new file mode 100644
+index 0000000..53332b6
+--- /dev/null
++++ b/drivers/spbau/martynov/module-pr5.c
+@@ -0,0 +1,310 @@
++// http://lxr.free-electrons.com/source/Documentation/filesystems/vfs.txt?v=3.7
++// for mount:
++// # mount -t rofs none /mnt
++#include <linux/module.h>						// Этот файл подключается в любом модуле по соглашению,
++#include <linux/kernel.h>						// для функции printk(),
++#include <linux/init.h>							// для макросов __init и __exit,
++#include <linux/pagemap.h>						// для PAGE_CACHE_SIZE и PAGE_CACHE_SHIFT,
++#include <linux/fs.h>							// для qstr,
++#include <linux/version.h>						// для LINUX_VERSION_CODE
++
++#define LFS_MAGIC 0x19980122 // "магический номер" файловой системы.
++
++static struct inode *rofs_make_inode(struct super_block *sb, int mode);
++static struct dentry *rofs_get_super(struct file_system_type *fst, int flags, const char *devname, void *data);
++static int rofs_fill_super(struct super_block *sb, void *data, int silent);
++static void rofs_create_files (struct super_block *sb, struct dentry *root);
++static struct inode *rofs_create_file(struct super_block *sb, struct dentry *dir, const char *name);
++static struct dentry *rofs_create_dir(struct super_block *sb, struct dentry *dir, const char *name);
++static int rofs_open(struct inode *inode, struct file *filp);
++static ssize_t rofs_read_file (struct file *filp, char *buf, size_t count, loff_t *offset);
++
++// Эта структура передаётся в качестве аргумента функции register_filesystem(). Структура описана в синтаксисе С99.
++static struct file_system_type rofs_type = {
++	.owner = THIS_MODULE,
++	// имя файловой системы (как ext2, ext3, ext4...)
++	.name = "rofs",
++	// считывает суперблок с диска
++	//.get_sb = rofs_get_super,
++	.mount = rofs_get_super,
++	.kill_sb = kill_litter_super,
++};
++
++// Для реализации операций с суперблоком необходимо создать объект структуры super_operations и "перекрыть" необходимые функции.
++static struct super_operations rofs_sops = {
++	// Поле хранит ссылку на функцию simple_statfs(), которая вызывается VFS для получения статистики файловой системы.
++	.statfs = simple_statfs,
++	// Поле хранит ссылку на функцию generic_delete_inode(), которая вызывается подсистемой VFS, когда исчезает последняя ссылка на объект inode.
++	.drop_inode = generic_delete_inode,
++};
++
++// Для определения операций с файлами создадим экземпляр объекта file_operations.
++static struct file_operations rofs_fops = {
++	// Определим операции открытия (поле open)
++	.open= rofs_open,
++	// ...и чтения (поле read)
++	.read = rofs_read_file,
++};
++
++// Функция принимает указатель на суперблок файловой системы и значение прав доступа для нового inode и возвращает указатель на созданный inode.
++static struct inode *rofs_make_inode(struct super_block *sb, int mode)
++{
++	// выделяется память для нового inode
++	struct inode *ret = new_inode(sb);
++
++	// если инициализация успешна, то заполняются поля структуры inode
++	if (ret)
++	{
++		// права доступа к объекту inode
++		ret->i_mode = mode;
++		ret->i_uid = ret->i_gid = 0;
++		// размер блока (кластера) в байтах = 4096
++		//ret->i_blksize = PAGE_CACHE_SIZE;
++		// размер файла в блоках (файл не создаётся, по этому размер 0)
++		ret->i_blocks = 0;
++		// время последнего доступа к файлу, последнего изменения и время изменения индекса
++		ret->i_atime = ret->i_mtime = ret->i_ctime = CURRENT_TIME;
++	}
++	return ret;
++}
++
++// Функция по считыванию суперблока реализована через стандартную функцию mount_single().
++static struct dentry *rofs_get_super(struct file_system_type *fst, int flags, const char *devname, void *data)
++{
++	// функция возвращает указатель на соответствующий объект суперблока файловой системы fs_type. При этом будет выполнена функция, на которую указывает третий параметр
++	return mount_single(fst, flags, data, rofs_fill_super);
++}
++
++// На эту функцию указывает get_sb_single, которую оборачивает rofs_get_super
++static int rofs_fill_super(struct super_block *sb, void *data, int silent)
++{
++	struct inode *root_inode;
++	struct dentry *root_dentry;
++	//Cначала заполняются поля объекта суперблока.
++
++	//размер блока (кластера) в байтах и битах
++	sb->s_blocksize = PAGE_CACHE_SIZE;
++	sb->s_blocksize_bits = PAGE_CACHE_SHIFT;
++	//"магический номер" файловой системы - 0x19980122.
++	sb->s_magic = LFS_MAGIC;
++	// ccылка на объект операций с суперблоком
++	sb->s_op = &rofs_sops;
++
++	// В функции создается корневой каталог - объект inode, созданный с помощью функции rofs_make_inode().
++	root_inode = rofs_make_inode (sb, S_IFDIR | 0755);
++	if (!root_inode) {
++		printk(KERN_ERR "Inode error: can't create root directory\n");
++		return -ENOMEM;
++	}
++	// указатели на объект операций с объектом inode и файловых операций
++	root_inode->i_op = &simple_dir_inode_operations;
++	root_inode->i_fop = &simple_dir_operations;
++
++	// чтобы объект dentry "отображался в ядре", его необходимо "увязать" с супреблоком.
++	#if LINUX_VERSION_CODE < KERNEL_VERSION(3,4,0)
++        	root_dentry = d_alloc_root(root_inode);
++	#else
++		root_dentry = d_make_root(root_inode);
++	#endif
++	if (!root_dentry) {
++		printk(KERN_ERR "Dentry error: can't create root directory\n");
++		// Закрыть хендл на dentry
++		iput(root_inode);
++		return -ENOMEM;
++	}
++	// указатель на объект dentry, представляющий корневой каталог
++	sb->s_root = root_dentry;
++	// После создания корневого каталога в файловой системе создаются первые файлы - функция принимает указатель на суперблок файловой системы и корневой объект dentry.
++	rofs_create_files(sb, root_dentry);
++	return 0;
++}
++
++// Основная функция, которая строит файловую систему
++static void rofs_create_files (struct super_block *sb, struct dentry *root)
++{
++
++	// Папка и сноформацией о человеке
++	struct dentry *dinfo;
++	// Папка с персональными данными
++	struct dentry *dpersonal;
++	// Папка с оценками
++	struct dentry *drating;
++
++	// имя автора файловой системы
++	struct inode *fname;
++	// электронный адрес автора
++	struct inode *fmail;
++	// телефон автора
++	struct inode *fphone;
++
++	// средний балл по гипотетической математике
++	struct inode *fmath;
++	// средний балл по гипотетическому программированию
++	struct inode *fprogramming;
++	// средний балл по гипотетическому инжинирингу
++	struct inode *fengineering;
++
++	dinfo = rofs_create_dir(sb, root, "info");
++	if (dinfo)
++	{
++		dpersonal = rofs_create_dir(sb, dinfo, "personal");
++		if (dpersonal)
++		{
++			fname = rofs_create_file(sb, dpersonal, "name");
++			fname->i_private = "Semen Martynov";
++
++			fmail = rofs_create_file(sb, dpersonal, "mail");
++			fmail->i_private = "semen.martynov@gmail.com";
++
++			fphone = rofs_create_file(sb, dpersonal, "phone");
++			fphone->i_private = "000 000 000";
++		}
++	}
++
++	drating = rofs_create_dir(sb, root, "rating");
++	if (drating)
++	{
++		fmath = rofs_create_file(sb, drating, "math");
++		fmath->i_private = "5";
++
++		fprogramming = rofs_create_file(sb, drating, "programming");
++		fprogramming->i_private = "5";
++
++		fengineering = rofs_create_file(sb, drating, "engineering");
++		fengineering->i_private = "5";
++	}
++}
++
++// создаёт файл принимает в качестве параметров объект суперблока, создаваемый объект dentry (каталог), в котором создается файл, имя создаваемого объекта dentry
++static struct inode *rofs_create_file(struct super_block *sb, struct dentry *dir, const char *name)
++{
++	struct inode *inode;
++	struct dentry *dentry;
++
++	// заполняется кэш объектов dentry.
++	// qstr - элемент кэша объектов dentry
++	struct qstr qname;
++	// имя объекта
++	qname.name = name;
++	// длинна имени
++	qname.len = strlen(name);
++	// хеш объекта
++	qname.hash = full_name_hash(name, qname.len);
++
++	// создаются объекты inode и dentry и связываются друг с другом.
++	// Выделяем память для нового объекта dentry - принимает указатель на создаваемый объект dentry
++	dentry = d_alloc(dir, &qname);
++	if (!dentry) {
++		printk(KERN_ERR "Dentry error: can't create file %s\n", name);
++		return 0;
++	}
++
++	// Создаём новый объект inode.
++	inode = rofs_make_inode(sb, S_IFREG | 0644);
++	if (!inode) {
++		printk(KERN_ERR "Inode error: can't create file %s\n", name);
++		// Закрыть хендл на dentry
++		dput(dentry);
++		return 0;
++	}
++	inode->i_fop = &rofs_fops;
++
++	//DPRINTK("dentry %p, creating %.*s", dentry, dentry->d_name.len, dentry->d_name.name);
++	
++	// происходит связка объектов
++	d_add(dentry, inode);
++
++	return inode;
++}
++
++// создает каталог в файловой системе - принимает указатель на объект суперблок, указатель на объект dentry, в котором создается каталог и имя каталога
++static struct dentry *rofs_create_dir(struct super_block *sb, struct dentry *dir, const char *name)
++{
++	struct inode *inode;
++	struct dentry *dentry;
++
++	// заполняется кэш объектов dentry.
++	// qstr - элемент кэша объектов dentry
++	struct qstr qname;
++	// имя объекта
++	qname.name = name;
++	// длинна имени
++	qname.len = strlen(name);
++	// хеш объекта
++	qname.hash = full_name_hash(name, qname.len);
++
++	// создаются объекты inode и dentry и связываются друг с другом.
++	// Выделяем память для нового объекта dentry - принимает указатель на создаваемый объект dentry
++	dentry = d_alloc(dir, &qname);
++	if (!dentry) {
++		printk(KERN_ERR "Dentry error: can't create directory %s\n", name);
++		return 0;
++	}
++
++	// Создаём новый объект inode.
++	inode = rofs_make_inode(sb, S_IFDIR | 0755);
++	if (!inode) {
++		printk(KERN_ERR "Inode error: can't create directory %s\n", name);
++		// Закрыть хендл на dentry
++		dput(dentry);
++		return 0;
++	}
++	inode->i_op = &simple_dir_inode_operations;
++	inode->i_fop = &simple_dir_operations;
++
++	//DPRINTK("dentry %p, creating %.*s", dentry, dentry->d_name.len, dentry->d_name.name);
++
++	// происходит связка объектов
++	d_add(dentry, inode);
++
++	return dentry;
++}
++
++// Функция открытия принимает указатель на объект inode, связанный с объектом file с именем filp.
++static int rofs_open(struct inode *inode, struct file *filp)
++{
++	filp->private_data = inode->i_private;
++	return 0;
++}
++
++// Функция чтения из файла - принимает в качестве параметров указатель на объект file, указатель на буфер, в который передаются данные buf, количество считываемых байт count (размер буфера) и смещение относительно начала файла offset.
++static ssize_t rofs_read_file (struct file *filp, char *buf, size_t count, loff_t *offset)
++{
++
++	char* tmp = (char*)filp->private_data;
++	int len;
++
++	len = strlen(tmp);
++
++	//Если количество запрошенных байт больше, чем можно передать, значение count устанавливается в точно меньшее значение.
++	if (count > len - *offset)
++		count = len - *offset;
++
++
++	// передать в пространство пользователя значение переменной tmp
++	if (copy_to_user(buf, tmp + *offset, count))
++		return -EFAULT;
++
++	// значение смещения увеличивается на размер буфера count.
++	*offset += count;
++	return count;
++}
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Semen Martynov <semen.martynov@gmail.com>");
++MODULE_DESCRIPTION("SPbAU: Linux Kernel Programming - task 05");
++MODULE_VERSION("1.0");
++
++static int __init start(void) // Точка входа в модуль
++{
++	return register_filesystem(&rofs_type);
++	return 0; // в случае успешной загрузки возвращать нулевое значение
++}
++static void __exit stop(void) // Точка выхода
++{
++	unregister_filesystem(&rofs_type);
++	//printk("Module unloaded\n");
++}
++module_init(start);
++module_exit(stop);
++
+-- 
+1.7.10.4
+
